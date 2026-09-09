@@ -663,7 +663,7 @@ struct ConfigInstaller {
                 ("PostToolUse", 5, false),
                 ("Stop", 5, false),
             ]
-        case .flat, .traeIDE:
+        case .flat:
             return [
                 ("beforeSubmitPrompt", 5, false),
                 ("beforeShellExecution", 5, false),
@@ -675,6 +675,20 @@ struct ConfigInstaller {
                 ("afterAgentThought", 5, false),
                 ("afterAgentResponse", 5, false),
                 ("stop", 5, false),
+            ]
+        case .traeIDE:
+            return [
+                ("UserPromptSubmit", 5, false),
+                ("PreToolUse", 5, false),
+                ("PostToolUse", 5, false),
+                ("PostToolUseFailure", 5, false),
+                ("Stop", 5, false),
+                ("SubagentStart", 5, false),
+                ("SubagentStop", 5, false),
+                ("SessionStart", 5, false),
+                ("SessionEnd", 5, false),
+                ("Notification", 600, false),
+                ("PreCompact", 5, false),
             ]
         case .traecli:
             return [
@@ -934,10 +948,9 @@ struct ConfigInstaller {
 
         // Install hook script + bridge binary (shared by all CLIs)
         installHookScript(fm: fm)
-        installBridgeBinary(fm: fm)
 
         // Install hooks for each enabled CLI
-        var ok = true
+        var ok = installBridgeBinary(fm: fm)
         for cli in allCLIs {
             guard isEnabled(source: cli.source) else { continue }
             if cli.source == "claude" {
@@ -1529,6 +1542,8 @@ struct ConfigInstaller {
             // Clean up CodeIsland-managed entries written with the old Trae IDE
             // event names (for example beforeReadFile) at the new Trae CLI path.
             hooks = removeManagedHookEntries(from: hooks)
+        } else if cli.format == .traeIDE {
+            hooks = removeLegacyTraeIDEManagedEntries(from: hooks)
         }
         // Quote the path in case home directory contains spaces or special characters
         let quotedBridge = bridgeCommand.contains(" ") ? "\"\(bridgeCommand)\"" : bridgeCommand
@@ -1555,11 +1570,16 @@ struct ConfigInstaller {
                 entry = ["command": "\(baseCommand) --event \(event)"]
             case .traeIDE:
                 let traeCommand = "\(baseCommand) --event \(event)"
-                entry = [
-                    "matcher": "*",
-                    "loop_limit": 5,
+                var traeEntry: [String: Any] = [
                     "hooks": [["type": "command", "command": traeCommand, "timeout": timeout] as [String: Any]],
                 ]
+                if event == "PreToolUse" || event == "PostToolUse" || event == "Notification" {
+                    traeEntry["matcher"] = "*"
+                }
+                if event == "Stop" {
+                    traeEntry["loop_limit"] = 5
+                }
+                entry = traeEntry
             case .traecli:
                 // Treat like flat for custom JSON hook configs; built-in TraeCli uses YAML install path.
                 entry = ["command": "\(baseCommand) --event \(event)"]
@@ -2817,6 +2837,58 @@ struct ConfigInstaller {
 
     // MARK: - Detection helpers
 
+    private static let legacyTraeIDEEvents: Set<String> = [
+        "beforeSubmitPrompt",
+        "beforeShellExecution",
+        "afterShellExecution",
+        "beforeReadFile",
+        "afterFileEdit",
+        "beforeMCPExecution",
+        "afterMCPExecution",
+        "afterAgentThought",
+        "afterAgentResponse",
+        "stop",
+    ]
+
+    private static func isCodeIslandBridgeCommand(_ command: String) -> Bool {
+        command.range(
+            of: #"(^|[/\"'\s])codeisland-bridge([\"'\s]|$)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    static func removeLegacyTraeIDEManagedEntries(
+        from hooks: [String: Any]
+    ) -> [String: Any] {
+        var cleaned = hooks
+        for event in legacyTraeIDEEvents {
+            guard let entries = cleaned[event] as? [[String: Any]] else { continue }
+            let remaining = entries.compactMap { entry -> [String: Any]? in
+                if let command = entry["command"] as? String,
+                   isCodeIslandBridgeCommand(command) {
+                    return nil
+                }
+                guard let hookList = entry["hooks"] as? [[String: Any]] else {
+                    return entry
+                }
+                let remainingHooks = hookList.filter {
+                    guard let command = $0["command"] as? String else { return true }
+                    return !isCodeIslandBridgeCommand(command)
+                }
+                guard !remainingHooks.isEmpty else { return nil }
+                var updated = entry
+                updated["hooks"] = remainingHooks
+                return updated
+            }
+            if remaining.isEmpty {
+                cleaned.removeValue(forKey: event)
+            } else {
+                cleaned[event] = remaining
+            }
+        }
+        return cleaned
+    }
+
     static func removeManagedHookEntries(from hooks: [String: Any]) -> [String: Any] {
         var cleaned = hooks
         for (event, value) in cleaned {
@@ -2943,30 +3015,34 @@ struct ConfigInstaller {
         }
     }
 
-    private static func installBridgeBinary(fm: FileManager) {
-        guard let execPath = Bundle.main.executablePath else { return }
+    @discardableResult
+    private static func installBridgeBinary(fm: FileManager) -> Bool {
+        guard let execPath = Bundle.main.executablePath else { return false }
         let execDir = (execPath as NSString).deletingLastPathComponent
         let contentsDir = (execDir as NSString).deletingLastPathComponent
         var srcPath = contentsDir + "/Helpers/codeisland-bridge"
         if !fm.fileExists(atPath: srcPath) { srcPath = execDir + "/codeisland-bridge" }
-        guard fm.fileExists(atPath: srcPath) else { return }
+        return syncBridgeBinary(sourcePath: srcPath, destinationPath: bridgePath, fm: fm)
+    }
 
-        // Atomic replace: copy to temp file first, then rename (overwrites atomically)
-        let tmpPath = bridgePath + ".tmp.\(ProcessInfo.processInfo.processIdentifier)"
+    @discardableResult
+    static func syncBridgeBinary(sourcePath: String, destinationPath: String, fm: FileManager = .default) -> Bool {
+        guard fm.fileExists(atPath: sourcePath) else { return false }
+
+        let tempPath = destinationPath + ".tmp.\(UUID().uuidString)"
+        defer { try? fm.removeItem(atPath: tempPath) }
+
         do {
-            try? fm.removeItem(atPath: tmpPath)
-            try fm.copyItem(atPath: srcPath, toPath: tmpPath)
-            chmod(tmpPath, 0o755)
-            // Strip quarantine xattr so Gatekeeper won't block the binary
-            stripQuarantine(tmpPath)
-            _ = try fm.replaceItemAt(URL(fileURLWithPath: bridgePath), withItemAt: URL(fileURLWithPath: tmpPath))
+            try fm.copyItem(atPath: sourcePath, toPath: tempPath)
+            chmod(tempPath, 0o755)
+            stripQuarantine(tempPath)
+            guard rename(tempPath, destinationPath) == 0 else { return false }
+            chmod(destinationPath, 0o755)
+            stripQuarantine(destinationPath)
+            return true
         } catch {
-            // replaceItemAt fails if destination doesn't exist yet — fall back to rename
-            try? fm.moveItem(atPath: tmpPath, toPath: bridgePath)
-            chmod(bridgePath, 0o755)
+            return false
         }
-        // Ensure final binary is free of quarantine (covers both paths above)
-        stripQuarantine(bridgePath)
     }
 
     /// Remove com.apple.quarantine xattr so Gatekeeper won't block the binary.

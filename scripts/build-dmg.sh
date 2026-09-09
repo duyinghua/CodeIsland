@@ -36,15 +36,20 @@ esac
 
 echo "==> Building CodeIsland ${VERSION} (${BUILD_ARCH})"
 
+SWIFT_BUILD_OPTIONS=()
+if [ "${SWIFTPM_DISABLE_SANDBOX:-0}" = "1" ]; then
+    SWIFT_BUILD_OPTIONS+=(--disable-sandbox)
+fi
+
 cd "$REPO_ROOT"
 case "$BUILD_ARCH" in
     universal)
         # Build for both architectures
-        swift build -c release --arch arm64
-        swift build -c release --arch x86_64
+        swift build -c release --arch arm64 "${SWIFT_BUILD_OPTIONS[@]}"
+        swift build -c release --arch x86_64 "${SWIFT_BUILD_OPTIONS[@]}"
         ;;
     arm64)
-        swift build -c release --arch arm64
+        swift build -c release --arch arm64 "${SWIFT_BUILD_OPTIONS[@]}"
         ;;
 esac
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import CoreServices
 import os.log
 import SQLite3
@@ -638,13 +639,26 @@ final class AppState {
         return qoderIDEBundlePrefixes.contains { path.contains($0) }
     }
 
+    /// Bundle names used by Trae CN releases, lowercased for path matching.
+    nonisolated static let traeCNIDEBundlePrefixes = [
+        "/trae.app/contents/",
+        "/traecn.app/contents/",
+        "/trae cn.app/contents/",
+        "/traecode cn.app/contents/",
+    ]
+
+    nonisolated static func isTraeCNIDEBundlePath(_ executablePath: String) -> Bool {
+        let path = executablePath.lowercased()
+        return traeCNIDEBundlePrefixes.contains { path.contains($0) }
+    }
+
     private nonisolated static func isNativeAppProcess(_ pid: pid_t, source: String) -> Bool {
         guard let executable = executablePath(for: pid) else { return false }
         let path = executable.lowercased()
         switch source {
         case "cursor":     return path.contains("/cursor.app/contents/")
         case "trae":       return path.contains("/trae.app/contents/")
-        case "traecn":     return path.contains("/trae.app/contents/") || path.contains("/traecn.app/contents/")
+        case "traecn":     return isTraeCNIDEBundlePath(path)
         case "qoder":      return isQoderIDEBundlePath(path)
         // QoderWork desktop app (#249) — bundle id undocumented; the standard
         // /Applications/QoderWork.app layout is assumed, pending real-install

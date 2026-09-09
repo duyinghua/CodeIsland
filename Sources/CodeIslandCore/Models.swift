@@ -6,6 +6,11 @@ public enum CLIProcessResolver {
         let lowercasedPath = path.lowercased()
 
         switch normalizedSource {
+        case "traecn":
+            return lowercasedPath.contains("/trae.app/contents/")
+                || lowercasedPath.contains("/traecn.app/contents/")
+                || lowercasedPath.contains("/trae cn.app/contents/")
+                || lowercasedPath.contains("/traecode cn.app/contents/")
         case "traecli":
             return lowercasedPath.hasSuffix("/coco")
                 || lowercasedPath.hasSuffix("/traecli")
@@ -96,10 +101,17 @@ public enum CLIProcessResolver {
     ) -> Int32 {
         guard immediateParentPID > 0 else { return immediateParentPID }
 
-        if let directMatch = ancestry.first(where: {
-            sourceMatchesExecutablePath($0.executablePath ?? "", source: source)
-        }) {
-            return directMatch.pid
+        let normalizedSource = SessionSnapshot.normalizedSupportedSource(source)
+        let match = normalizedSource == "traecn"
+            ? ancestry.last(where: {
+                sourceMatchesExecutablePath($0.executablePath ?? "", source: source)
+            })
+            : ancestry.first(where: {
+                sourceMatchesExecutablePath($0.executablePath ?? "", source: source)
+            })
+
+        if let match {
+            return match.pid
         }
 
         return immediateParentPID
@@ -128,6 +140,33 @@ public enum CLIProcessResolver {
         }
 
         return immediateParentPID
+    }
+
+    /// Generates a stable fallback ID when a hook provider omits `session_id`.
+    /// Trae CN's IDE process is long-lived, so its key includes the normalized
+    /// working directory to keep separate project conversations isolated.
+    public static func fallbackSessionId(
+        source: String,
+        immediateParentPID: Int32,
+        cwd: String?,
+        ancestry: [(pid: Int32, executablePath: String?)]
+    ) -> String? {
+        guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        let sessionPID = resolvedSessionPID(
+            immediateParentPID: immediateParentPID,
+            source: source,
+            ancestry: ancestry
+        )
+        guard SessionSnapshot.normalizedSupportedSource(source) == "traecn" else {
+            return "\(source)-ppid-\(sessionPID)"
+        }
+        guard let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !cwd.isEmpty else {
+            return nil
+        }
+        let normalizedCwd = (cwd as NSString).standardizingPath
+        return "traecn-ppid-\(sessionPID)-cwd-\(normalizedCwd)"
     }
 
     /// Walk the process ancestry and return the first known CLI source whose binary
