@@ -980,8 +980,15 @@ public func reduceEvent(
         return effects
     }
 
+    // Trae CN tags its primary conversation as `solo_agent`. It is not a folded
+    // subagent: treating it as one records it as closed on Stop and drops every
+    // later turn with the same stable agent id.
+    let isTraeCNPrimaryAgent = SessionSnapshot.normalizedSupportedSource(
+        event.rawJSON["_source"] as? String
+    ) == "traecn" && event.agentId == "solo_agent"
+
     // Route subagent-specific events
-    if let agentId = event.agentId {
+    if let agentId = event.agentId, !isTraeCNPrimaryAgent {
         let handled = handleSubagentEvent(
             sessions: &sessions,
             sessionId: sessionId,

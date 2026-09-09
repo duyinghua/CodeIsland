@@ -678,17 +678,16 @@ struct ConfigInstaller {
             ]
         case .traeIDE:
             return [
-                ("UserPromptSubmit", 5, false),
+                ("UserPromptSubmit", 5, true),
                 ("PreToolUse", 5, false),
-                ("PostToolUse", 5, false),
-                ("PostToolUseFailure", 5, false),
-                ("Stop", 5, false),
-                ("SubagentStart", 5, false),
-                ("SubagentStop", 5, false),
+                ("PostToolUse", 5, true),
                 ("SessionStart", 5, false),
-                ("SessionEnd", 5, false),
-                ("Notification", 600, false),
-                ("PreCompact", 5, false),
+                ("SessionEnd", 5, true),
+                ("Stop", 5, true),
+                ("SubagentStart", 5, true),
+                ("SubagentStop", 5, true),
+                ("Notification", 86400, false),
+                ("PreCompact", 5, true),
             ]
         case .traecli:
             return [
