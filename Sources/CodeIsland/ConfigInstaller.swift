@@ -1544,10 +1544,6 @@ struct ConfigInstaller {
             // Clean up CodeIsland-managed entries written with the old Trae IDE
             // event names (for example beforeReadFile) at the new Trae CLI path.
             hooks = removeManagedHookEntries(from: hooks)
-        } else if cli.format == .traeIDE {
-            // 升级前的 Trae IDE 使用小写旧事件名；只移除 CodeIsland 自己的
-            // bridge，保留用户在这些事件上的自定义 hook。
-            hooks = removeLegacyTraeIDEManagedEntries(from: hooks)
         }
         // Quote the path in case home directory contains spaces or special characters
         let quotedBridge = bridgeCommand.contains(" ") ? "\"\(bridgeCommand)\"" : bridgeCommand
@@ -2840,58 +2836,6 @@ struct ConfigInstaller {
     }
 
     // MARK: - Detection helpers
-
-    private static let legacyTraeIDEEvents: Set<String> = [
-        "beforeSubmitPrompt",
-        "beforeShellExecution",
-        "afterShellExecution",
-        "beforeReadFile",
-        "afterFileEdit",
-        "beforeMCPExecution",
-        "afterMCPExecution",
-        "afterAgentThought",
-        "afterAgentResponse",
-        "stop",
-    ]
-
-    private static func isCodeIslandBridgeCommand(_ command: String) -> Bool {
-        command.range(
-            of: #"(^|[/\"'\s])codeisland-bridge([\"'\s]|$)"#,
-            options: [.regularExpression, .caseInsensitive]
-        ) != nil
-    }
-
-    static func removeLegacyTraeIDEManagedEntries(
-        from hooks: [String: Any]
-    ) -> [String: Any] {
-        var cleaned = hooks
-        for event in legacyTraeIDEEvents {
-            guard let entries = cleaned[event] as? [[String: Any]] else { continue }
-            let remaining = entries.compactMap { entry -> [String: Any]? in
-                if let command = entry["command"] as? String,
-                   isCodeIslandBridgeCommand(command) {
-                    return nil
-                }
-                guard let hookList = entry["hooks"] as? [[String: Any]] else {
-                    return entry
-                }
-                let remainingHooks = hookList.filter {
-                    guard let command = $0["command"] as? String else { return true }
-                    return !isCodeIslandBridgeCommand(command)
-                }
-                guard !remainingHooks.isEmpty else { return nil }
-                var updated = entry
-                updated["hooks"] = remainingHooks
-                return updated
-            }
-            if remaining.isEmpty {
-                cleaned.removeValue(forKey: event)
-            } else {
-                cleaned[event] = remaining
-            }
-        }
-        return cleaned
-    }
 
     static func removeManagedHookEntries(from hooks: [String: Any]) -> [String: Any] {
         var cleaned = hooks
