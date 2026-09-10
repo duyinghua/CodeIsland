@@ -379,12 +379,6 @@ if sourceTag == "cline" {
     }
 }
 
-// Inject cwd before generating a fallback session ID. Trae CN uses the main
-// process plus this directory to keep separate projects on one IDE process apart.
-if nonEmptyString(json["cwd"]) == nil {
-    json["cwd"] = FileManager.default.currentDirectoryPath
-}
-
 // Resolve process ancestry once — used for both session_id fallback (#148) and
 // _ppid resolution downstream. Some CLIs execute hooks through `sh -c`, so
 // `getppid()` is a transient shell rather than the long-lived CLI process.
@@ -434,19 +428,22 @@ if effectiveSource == "cline" {
     json["_ppid"] = 0
 }
 
-// Generate a stable fallback for providers that omit session_id. Use the
-// resolved source rather than only the command-line tag: Trae CN can reach
-// this bridge through an inferred source when its hook omits --source.
-if nonEmptyString(json["session_id"]) == nil,
-   let source = effectiveSource,
-   let fallbackSessionId = CLIProcessResolver.fallbackSessionId(
-       source: source,
-       immediateParentPID: Int32(immediateParentPID),
-       cwd: json["cwd"] as? String,
-       ancestry: coreAncestry
-   ) {
-    json["session_id"] = fallbackSessionId
-    debugLog("session_id missing, generated fallback id: \(fallbackSessionId)")
+// Validate: must have non-empty session_id
+if json["session_id"] == nil,
+   let source = sourceTag,
+   !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    // Fallback for third-party providers that don't include a stable session ID.
+    // Use the root same-source binary in the ancestry so sub-agent processes
+    // (e.g. Cursor IDE spawning multiple parallel agent subprocesses, #148)
+    // collapse onto a single session card instead of fanning into N cards
+    // (one per sub-agent ppid).
+    let sessionPID = CLIProcessResolver.resolvedSessionPID(
+        immediateParentPID: Int32(immediateParentPID),
+        source: effectiveSource ?? source,
+        ancestry: coreAncestry
+    )
+    json["session_id"] = "\(source)-ppid-\(sessionPID)"
+    debugLog("session_id missing, generated fallback id: \(json["session_id"] ?? "")")
 }
 guard let sessionId = json["session_id"] as? String, !sessionId.isEmpty else {
     debugLog("no session_id, dropping")

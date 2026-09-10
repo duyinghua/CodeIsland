@@ -1,5 +1,4 @@
 import SwiftUI
-import Foundation
 import CoreServices
 import os.log
 import SQLite3
@@ -639,7 +638,8 @@ final class AppState {
         return qoderIDEBundlePrefixes.contains { path.contains($0) }
     }
 
-    /// Bundle names used by Trae CN releases, lowercased for path matching.
+    /// Trae CN 实际安装包为 `Trae CN.app`；保留旧名称以兼容已有安装。
+    /// 这些前缀用于将常驻 IDE 进程识别为 Trae CN，而非命令行 Trae。
     nonisolated static let traeCNIDEBundlePrefixes = [
         "/trae.app/contents/",
         "/traecn.app/contents/",

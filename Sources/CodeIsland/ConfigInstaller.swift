@@ -677,6 +677,8 @@ struct ConfigInstaller {
                 ("stop", 5, false),
             ]
         case .traeIDE:
+            // Trae CN 实测会为主会话发出这些事件；UserPromptSubmit、PreToolUse、PostToolUse、Stop、Notification。
+            // 其余 Claude 风格事件目前不会触发
             return [
                 ("UserPromptSubmit", 5, true),
                 ("PreToolUse", 5, false),
@@ -947,9 +949,10 @@ struct ConfigInstaller {
 
         // Install hook script + bridge binary (shared by all CLIs)
         installHookScript(fm: fm)
+        installBridgeBinary(fm: fm)
 
         // Install hooks for each enabled CLI
-        var ok = installBridgeBinary(fm: fm)
+        var ok = true
         for cli in allCLIs {
             guard isEnabled(source: cli.source) else { continue }
             if cli.source == "claude" {
@@ -1542,6 +1545,8 @@ struct ConfigInstaller {
             // event names (for example beforeReadFile) at the new Trae CLI path.
             hooks = removeManagedHookEntries(from: hooks)
         } else if cli.format == .traeIDE {
+            // 升级前的 Trae IDE 使用小写旧事件名；只移除 CodeIsland 自己的
+            // bridge，保留用户在这些事件上的自定义 hook。
             hooks = removeLegacyTraeIDEManagedEntries(from: hooks)
         }
         // Quote the path in case home directory contains spaces or special characters
@@ -3014,34 +3019,30 @@ struct ConfigInstaller {
         }
     }
 
-    @discardableResult
-    private static func installBridgeBinary(fm: FileManager) -> Bool {
-        guard let execPath = Bundle.main.executablePath else { return false }
+    private static func installBridgeBinary(fm: FileManager) {
+        guard let execPath = Bundle.main.executablePath else { return }
         let execDir = (execPath as NSString).deletingLastPathComponent
         let contentsDir = (execDir as NSString).deletingLastPathComponent
         var srcPath = contentsDir + "/Helpers/codeisland-bridge"
         if !fm.fileExists(atPath: srcPath) { srcPath = execDir + "/codeisland-bridge" }
-        return syncBridgeBinary(sourcePath: srcPath, destinationPath: bridgePath, fm: fm)
-    }
+        guard fm.fileExists(atPath: srcPath) else { return }
 
-    @discardableResult
-    static func syncBridgeBinary(sourcePath: String, destinationPath: String, fm: FileManager = .default) -> Bool {
-        guard fm.fileExists(atPath: sourcePath) else { return false }
-
-        let tempPath = destinationPath + ".tmp.\(UUID().uuidString)"
-        defer { try? fm.removeItem(atPath: tempPath) }
-
+        // Atomic replace: copy to temp file first, then rename (overwrites atomically)
+        let tmpPath = bridgePath + ".tmp.\(ProcessInfo.processInfo.processIdentifier)"
         do {
-            try fm.copyItem(atPath: sourcePath, toPath: tempPath)
-            chmod(tempPath, 0o755)
-            stripQuarantine(tempPath)
-            guard rename(tempPath, destinationPath) == 0 else { return false }
-            chmod(destinationPath, 0o755)
-            stripQuarantine(destinationPath)
-            return true
+            try? fm.removeItem(atPath: tmpPath)
+            try fm.copyItem(atPath: srcPath, toPath: tmpPath)
+            chmod(tmpPath, 0o755)
+            // Strip quarantine xattr so Gatekeeper won't block the binary
+            stripQuarantine(tmpPath)
+            _ = try fm.replaceItemAt(URL(fileURLWithPath: bridgePath), withItemAt: URL(fileURLWithPath: tmpPath))
         } catch {
-            return false
+            // replaceItemAt fails if destination doesn't exist yet — fall back to rename
+            try? fm.moveItem(atPath: tmpPath, toPath: bridgePath)
+            chmod(bridgePath, 0o755)
         }
+        // Ensure final binary is free of quarantine (covers both paths above)
+        stripQuarantine(bridgePath)
     }
 
     /// Remove com.apple.quarantine xattr so Gatekeeper won't block the binary.

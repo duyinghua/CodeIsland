@@ -27,42 +27,6 @@ final class ConfigInstallerTests: XCTestCase {
         return hooks.compactMap { $0 as? [String: Any] }
     }
 
-    func testSyncBridgeBinaryAtomicallyReplacesExistingBinary() throws {
-        let fm = FileManager.default
-        let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let sourcePath = tempDir.appendingPathComponent("source-bridge")
-        let destinationPath = tempDir.appendingPathComponent("codeisland-bridge")
-        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: tempDir) }
-
-        try Data("new bridge".utf8).write(to: sourcePath)
-        try Data("old bridge".utf8).write(to: destinationPath)
-
-        XCTAssertTrue(ConfigInstaller.syncBridgeBinary(
-            sourcePath: sourcePath.path,
-            destinationPath: destinationPath.path,
-            fm: fm
-        ))
-        XCTAssertEqual(try Data(contentsOf: destinationPath), Data("new bridge".utf8))
-        XCTAssertTrue(fm.isExecutableFile(atPath: destinationPath.path))
-    }
-
-    func testSyncBridgeBinaryPreservesExistingBinaryWhenSourceIsMissing() throws {
-        let fm = FileManager.default
-        let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let destinationPath = tempDir.appendingPathComponent("codeisland-bridge")
-        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: tempDir) }
-        try Data("old bridge".utf8).write(to: destinationPath)
-
-        XCTAssertFalse(ConfigInstaller.syncBridgeBinary(
-            sourcePath: tempDir.appendingPathComponent("missing-bridge").path,
-            destinationPath: destinationPath.path,
-            fm: fm
-        ))
-        XCTAssertEqual(try Data(contentsOf: destinationPath), Data("old bridge".utf8))
-    }
-
     func testQoderConfigIncludesPermissionRequestHook() throws {
         let cli = try XCTUnwrap(ConfigInstaller.allCLIs.first { $0.source == "qoder" })
         XCTAssertEqual(cli.format, .claude)
@@ -220,12 +184,12 @@ final class ConfigInstallerTests: XCTestCase {
 
         let configPath = tempDir.appendingPathComponent("hooks.json").path
         let cli = CLIConfig(
-            name: "Trae CN",
-            source: "traecn",
+            name: "Trae",
+            source: "trae",
             configPath: configPath,
             configKey: "hooks",
             format: .traeIDE,
-            events: ConfigInstaller.defaultEvents(for: .traeIDE)
+            events: [("beforeSubmitPrompt", 5, false)]
         )
 
         XCTAssertTrue(ConfigInstaller.installExternalHooks(cli: cli, fm: fm))
@@ -234,35 +198,25 @@ final class ConfigInstallerTests: XCTestCase {
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(root["version"] as? Int, 1)
         let hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
-        XCTAssertEqual(Set(hooks.keys), Set(cli.events.map { $0.0 }))
-
-        for (event, timeout, _) in cli.events {
-            let entries = try XCTUnwrap(hooks[event] as? [[String: Any]])
-            let entry = try XCTUnwrap(entries.first)
-            let usesMatcher = event == "PreToolUse" || event == "PostToolUse" || event == "Notification"
-            XCTAssertEqual(entry["matcher"] as? String, usesMatcher ? "*" : nil)
-            XCTAssertEqual(entry["loop_limit"] as? Int, event == "Stop" ? 5 : nil)
-            let hookList = try XCTUnwrap(entry["hooks"] as? [[String: Any]])
-            let hook = try XCTUnwrap(hookList.first)
-            XCTAssertEqual(hook["type"] as? String, "command")
-            XCTAssertEqual(hook["timeout"] as? Int, timeout)
-            let command = try XCTUnwrap(hook["command"] as? String)
-            XCTAssertTrue(command.contains("codeisland-bridge --source traecn"))
-            XCTAssertTrue(command.contains("--event \(event)"))
-        }
+        let entries = try XCTUnwrap(hooks["beforeSubmitPrompt"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        XCTAssertEqual(entry["matcher"] as? String, "*")
+        XCTAssertEqual(entry["loop_limit"] as? Int, 5)
+        let hookList = try XCTUnwrap(entry["hooks"] as? [[String: Any]])
+        let hook = try XCTUnwrap(hookList.first)
+        XCTAssertEqual(hook["type"] as? String, "command")
+        XCTAssertEqual(hook["timeout"] as? Int, 5)
+        let command = try XCTUnwrap(hook["command"] as? String)
+        XCTAssertTrue(command.contains("codeisland-bridge --source trae"))
+        XCTAssertTrue(command.contains("--event beforeSubmitPrompt"))
     }
 
-    func testBuiltInTraeUsesOfficialIDEHooksPathsAndEvents() throws {
-        let trae = try XCTUnwrap(ConfigInstaller.allCLIs.first { $0.source == "trae" })
-        let traeCN = try XCTUnwrap(ConfigInstaller.allCLIs.first { $0.source == "traecn" })
-        XCTAssertEqual(trae.configPath, ".trae/hooks.json")
-        XCTAssertEqual(traeCN.configPath, ".trae-cn/hooks.json")
-        XCTAssertEqual(trae.format.storageValue, HookFormat.traeIDE.storageValue)
-        XCTAssertEqual(traeCN.format.storageValue, HookFormat.traeIDE.storageValue)
-        XCTAssertEqual(trae.events.map { $0.0 }, ConfigInstaller.defaultEvents(for: .traeIDE).map { $0.0 })
-        XCTAssertEqual(traeCN.events.map { $0.0 }, ConfigInstaller.defaultEvents(for: .traeIDE).map { $0.0 })
-        XCTAssertFalse(trae.events.contains { $0.0 == "beforeReadFile" })
-        XCTAssertFalse(traeCN.events.contains { $0.0 == "beforeSubmitPrompt" })
+    func testBuiltInTraeKeepsLegacyIDEHooksPath() throws {
+        let cli = try XCTUnwrap(ConfigInstaller.allCLIs.first { $0.source == "trae" })
+
+        XCTAssertEqual(cli.configPath, ".trae/hooks.json")
+        XCTAssertEqual(cli.format.storageValue, HookFormat.traeIDE.storageValue)
+        XCTAssertTrue(cli.events.contains { $0.0 == "beforeReadFile" })
     }
 
     func testTraeCLINextUsesTraeXHooksSchema() throws {
@@ -354,7 +308,7 @@ final class ConfigInstallerTests: XCTestCase {
         })
     }
 
-    func testTraeIDEInstallMigratesLegacyManagedEntriesAndIsIdempotent() throws {
+    func testTraeIDEInstallMigratesOldFlatCodeIslandEntry() throws {
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -363,27 +317,10 @@ final class ConfigInstallerTests: XCTestCase {
         let configPath = tempDir.appendingPathComponent("hooks.json").path
         let old = """
         {
-          "version": 3,
-          "theme": "custom",
           "hooks": {
             "beforeSubmitPrompt": [
               {"command": "\(NSHomeDirectory())/.codeisland/codeisland-bridge --source trae --event beforeSubmitPrompt"},
               {"command": "/usr/local/bin/user-hook"}
-            ],
-            "beforeReadFile": [
-              {
-                "matcher": "*",
-                "hooks": [
-                  {"type": "command", "command": "\(NSHomeDirectory())/.codeisland/codeisland-bridge --source trae --event beforeReadFile"},
-                  {"type": "command", "command": "/usr/local/bin/user-read-hook"}
-                ]
-              }
-            ],
-            "afterAgentResponse": [
-              {"command": "/usr/local/bin/codeisland-bridge-helper"}
-            ],
-            "CustomEvent": [
-              {"command": "/usr/local/bin/custom-hook"}
             ]
           }
         }
@@ -396,41 +333,27 @@ final class ConfigInstallerTests: XCTestCase {
             configPath: configPath,
             configKey: "hooks",
             format: .traeIDE,
-            events: ConfigInstaller.defaultEvents(for: .traeIDE)
+            events: [("beforeSubmitPrompt", 5, false)]
         )
 
-        XCTAssertTrue(ConfigInstaller.installExternalHooks(cli: cli, fm: fm))
         XCTAssertTrue(ConfigInstaller.installExternalHooks(cli: cli, fm: fm))
 
         let data = try XCTUnwrap(fm.contents(atPath: configPath))
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(root["version"] as? Int, 3)
-        XCTAssertEqual(root["theme"] as? String, "custom")
+        XCTAssertEqual(root["version"] as? Int, 1)
         let hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
-
-        let promptEntries = try XCTUnwrap(hooks["beforeSubmitPrompt"] as? [[String: Any]])
-        XCTAssertEqual(promptEntries.count, 1)
-        XCTAssertEqual(promptEntries.first?["command"] as? String, "/usr/local/bin/user-hook")
-
-        let readEntries = try XCTUnwrap(hooks["beforeReadFile"] as? [[String: Any]])
-        let readHooks = try XCTUnwrap(readEntries.first?["hooks"] as? [[String: Any]])
-        XCTAssertEqual(readHooks.count, 1)
-        XCTAssertEqual(readHooks.first?["command"] as? String, "/usr/local/bin/user-read-hook")
-
-        let responseEntries = try XCTUnwrap(hooks["afterAgentResponse"] as? [[String: Any]])
-        XCTAssertEqual(responseEntries.first?["command"] as? String, "/usr/local/bin/codeisland-bridge-helper")
-        XCTAssertNotNil(hooks["CustomEvent"])
-
-        for event in ConfigInstaller.defaultEvents(for: .traeIDE).map({ $0.0 }) {
-            let entries = try XCTUnwrap(hooks[event] as? [[String: Any]])
-            let managedEntries = entries.filter { entry in
-                guard let hookList = entry["hooks"] as? [[String: Any]] else { return false }
-                return hookList.contains {
-                    ($0["command"] as? String ?? "").contains("codeisland-bridge --source trae --event \(event)")
-                }
+        let entries = try XCTUnwrap(hooks["beforeSubmitPrompt"] as? [[String: Any]])
+        let codeIslandEntries = entries.filter { entry in
+            if let command = entry["command"] as? String {
+                return command.contains("codeisland-bridge")
             }
-            XCTAssertEqual(managedEntries.count, 1)
+            if let hookList = entry["hooks"] as? [[String: Any]] {
+                return hookList.contains { ($0["command"] as? String ?? "").contains("codeisland-bridge") }
+            }
+            return false
         }
+        XCTAssertEqual(codeIslandEntries.count, 1)
+        XCTAssertTrue(entries.contains { ($0["command"] as? String) == "/usr/local/bin/user-hook" })
     }
 
     // MARK: - Kimi Code CLI TOML hooks

@@ -2,9 +2,6 @@
 .build/
 .swiftpm/
 
-# Temporary debug artifacts
-.dbg/
-
 # Superpowers artifacts
 .superpowers/
 HANDOFF.md

@@ -84,59 +84,6 @@ final class CLIProcessResolverTests: XCTestCase {
         XCTAssertEqual(pid, 12345)
     }
 
-    func testTraeCNTrackedPIDUsesRootIDEProcess() {
-        let ancestry: [(pid: Int32, executablePath: String?)] = [
-            (1001, "/Applications/Trae CN.app/Contents/Frameworks/Trae CN Helper.app/Contents/MacOS/Trae CN Helper"),
-            (9000, "/Applications/Trae CN.app/Contents/MacOS/Trae CN"),
-        ]
-
-        let tracked = CLIProcessResolver.resolvedTrackedPID(
-            immediateParentPID: 1001,
-            source: "traecn",
-            ancestry: ancestry
-        )
-
-        XCTAssertEqual(tracked, 9000)
-    }
-
-    func testTraeCNFallbackSessionIdUsesRootProcessAndCwd() {
-        let firstAncestry: [(pid: Int32, executablePath: String?)] = [
-            (1001, "/Applications/Trae CN.app/Contents/Frameworks/Trae CN Helper.app/Contents/MacOS/Trae CN Helper"),
-            (9000, "/Applications/Trae CN.app/Contents/MacOS/Trae CN"),
-        ]
-        let secondAncestry: [(pid: Int32, executablePath: String?)] = [
-            (1002, "/Applications/Trae CN.app/Contents/Frameworks/Trae CN Helper.app/Contents/MacOS/Trae CN Helper"),
-            (9000, "/Applications/Trae CN.app/Contents/MacOS/Trae CN"),
-        ]
-
-        let first = CLIProcessResolver.fallbackSessionId(
-            source: "traecn", immediateParentPID: 1001, cwd: "/Users/me/project/", ancestry: firstAncestry
-        )
-        let second = CLIProcessResolver.fallbackSessionId(
-            source: "trae-cn", immediateParentPID: 1002, cwd: "/Users/me/project", ancestry: secondAncestry
-        )
-
-        XCTAssertEqual(first, "traecn-ppid-9000-cwd-/Users/me/project")
-        XCTAssertEqual(second, first)
-        XCTAssertNil(CLIProcessResolver.fallbackSessionId(
-            source: "traecn", immediateParentPID: 1001, cwd: "", ancestry: firstAncestry
-        ))
-    }
-
-    func testTraeCNFallbackSessionIdKeepsDifferentCwdsSeparate() {
-        let ancestry: [(pid: Int32, executablePath: String?)] = [
-            (9000, "/Applications/Trae CN.app/Contents/MacOS/Trae CN"),
-        ]
-        let first = CLIProcessResolver.fallbackSessionId(
-            source: "traecn", immediateParentPID: 9000, cwd: "/Users/me/project-a", ancestry: ancestry
-        )
-        let second = CLIProcessResolver.fallbackSessionId(
-            source: "traecn", immediateParentPID: 9000, cwd: "/Users/me/project-b", ancestry: ancestry
-        )
-
-        XCTAssertNotEqual(first, second)
-    }
-
     // MARK: - inferSource (#220 / #95)
 
     /// #220: Claude Code launched inside Cursor's integrated terminal fires the
