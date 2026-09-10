@@ -638,10 +638,7 @@ final class AppState {
         return qoderIDEBundlePrefixes.contains { path.contains($0) }
     }
 
-    /// Trae CN 实际安装包为 `Trae CN.app`；保留旧名称以兼容已有安装。
-    /// 这些前缀用于将常驻 IDE 进程识别为 Trae CN，而非命令行 Trae。
     nonisolated static let traeCNIDEBundlePrefixes = [
-        "/trae.app/contents/",
         "/traecn.app/contents/",
         "/trae cn.app/contents/",
         "/traecode cn.app/contents/",

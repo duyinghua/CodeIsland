@@ -677,8 +677,8 @@ struct ConfigInstaller {
                 ("stop", 5, false),
             ]
         case .traeIDE:
-            // Trae CN 实测会为主会话发出这些事件；UserPromptSubmit、PreToolUse、PostToolUse、Stop、Notification。
-            // 其余 Claude 风格事件目前不会触发
+            // Trae CN was observed to fire these events for the main session: UserPromptSubmit, PreToolUse, PostToolUse, Stop, Notification.
+            // Other Claude-style events will not be triggered for now; they are retained.
             return [
                 ("UserPromptSubmit", 5, true),
                 ("PreToolUse", 5, false),
@@ -1570,16 +1570,11 @@ struct ConfigInstaller {
                 entry = ["command": "\(baseCommand) --event \(event)"]
             case .traeIDE:
                 let traeCommand = "\(baseCommand) --event \(event)"
-                var traeEntry: [String: Any] = [
+                entry = [
+                    "matcher": "*",
+                    "loop_limit": 5,
                     "hooks": [["type": "command", "command": traeCommand, "timeout": timeout] as [String: Any]],
                 ]
-                if event == "PreToolUse" || event == "PostToolUse" || event == "Notification" {
-                    traeEntry["matcher"] = "*"
-                }
-                if event == "Stop" {
-                    traeEntry["loop_limit"] = 5
-                }
-                entry = traeEntry
             case .traecli:
                 // Treat like flat for custom JSON hook configs; built-in TraeCli uses YAML install path.
                 entry = ["command": "\(baseCommand) --event \(event)"]
